@@ -88,14 +88,13 @@ public class SwiftHealthPlugin: NSObject, FlutterPlugin {
         let types = (arguments?["types"] as? Array) ?? []
 
         var typesToRequest = Set<HKSampleType>()
-
+        
         for key in types {
             let keyString = "\(key)"
             typesToRequest.insert(dataTypeLookUp(key: keyString))
         }
-
         if #available(iOS 11.0, *) {
-            healthStore.requestAuthorization(toShare: typesToRequest, read: typesToRequest) { (success, error) in
+            healthStore.requestAuthorization(toShare: nil, read: typesToRequest) { (success, error) in
                 result(success)
             }
         }
