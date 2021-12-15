@@ -17,6 +17,7 @@ import android.os.Handler
 import android.util.Log
 import java.util.Date
 import androidx.annotation.NonNull
+import com.google.android.gms.fitness.FitnessActivities
 import io.flutter.plugin.common.PluginRegistry.ActivityResultListener
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -30,7 +31,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 const val GOOGLE_FIT_PERMISSIONS_REQUEST_CODE = 1111
 const val CHANNEL_NAME = "flutter_health"
 const val MMOLL_2_MGDL = 18.0 // 1 mmoll= 18 mgdl
-
+const val TAG = "HEALTH"
 class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandler, ActivityResultListener, Result, ActivityAware, FlutterPlugin {
     private var result: Result? = null
     private var handler: Handler? = null
@@ -183,7 +184,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
     }
 
     private fun isIntField(dataSource: DataSource, unit: Field): Boolean {
-        val dataPoint =  DataPoint.builder(dataSource).build()
+        val dataPoint = DataPoint.builder(dataSource).build()
         val value = dataPoint.getValue(unit)
         return value.format == Field.FORMAT_INT32
     }
@@ -195,7 +196,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
         // while mgdl is used for glucose in this plugin.
         val isGlucose = field == HealthFields.FIELD_BLOOD_GLUCOSE_LEVEL
         return when (value.format) {
-            Field.FORMAT_FLOAT -> if (!isGlucose)  value.asFloat() else value.asFloat() * MMOLL_2_MGDL
+            Field.FORMAT_FLOAT -> if (!isGlucose) value.asFloat() else value.asFloat() * MMOLL_2_MGDL
             Field.FORMAT_INT32 -> value.asInt()
             Field.FORMAT_STRING -> value.asString()
             else -> Log.e("Unsupported format:", value.format.toString())
@@ -212,7 +213,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
         val type = call.argument<String>("dataTypeKey")!!
         val startTime = call.argument<Long>("startTime")!!
         val endTime = call.argument<Long>("endTime")!!
-        val value = call.argument<Float>( "value")!!
+        val value = call.argument<Float>("value")!!
 
         // Look up data type and unit for the type key
         val dataType = keyToHealthDataType(type)
@@ -239,8 +240,8 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
         // while mgdl is used for glucose in this plugin.
         val isGlucose = field == HealthFields.FIELD_BLOOD_GLUCOSE_LEVEL
         val dataPoint = if (!isIntField(dataSource, field))
-            builder.setField(field, if (!isGlucose) value else (value/ MMOLL_2_MGDL).toFloat()).build() else
-                builder.setField(field, value.toInt()).build()
+            builder.setField(field, if (!isGlucose) value else (value / MMOLL_2_MGDL).toFloat()).build() else
+            builder.setField(field, value.toInt()).build()
 
         val dataSet = DataSet.builder(dataSource)
                 .add(dataPoint)
@@ -265,11 +266,11 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
                         result.success(false)
                     }
         } catch (e3: Exception) {
-             result.success(false)
+            result.success(false)
         }
     }
 
-   private fun getTotalStepsInInterval(call: MethodCall, result: Result) {
+    private fun getTotalStepsInInterval(call: MethodCall, result: Result) {
         val start = call.argument<Long>("startDate")!!
         val end = call.argument<Long>("endDate")!!
 
@@ -353,6 +354,93 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
         }.start()
     }
 
+    private fun startSession(call: MethodCall, result: Result) {
+        val startTime = call.argument<Long>("startDate")!!
+        val sessionName = call.argument<String>("sessionName")!!
+        val id = call.argument<String>("id")!!
+        val desc = call.argument<String>("description")!!
+        val type = call.argument<String>("dataTypeKey")!!
+        val dataType = keyToHealthDataType(type)
+
+        Thread {
+            val session = Session.Builder()
+                    .setName(sessionName)
+                    .setIdentifier(id)
+                    .setDescription(desc)
+                    .setActivity(FitnessActivities.RUNNING)
+                    .setStartTime(startTime, TimeUnit.MILLISECONDS)
+                    .build()
+
+            val typesBuilder = FitnessOptions.builder()
+            typesBuilder.addDataType(dataType)
+            if (dataType == DataType.TYPE_SLEEP_SEGMENT) {
+                typesBuilder.accessSleepSessions(FitnessOptions.ACCESS_READ)
+            }
+            val fitnessOptions = typesBuilder.build()
+            val googleSignInAccount = GoogleSignIn.getAccountForExtension(activity!!.applicationContext, fitnessOptions)
+
+            Fitness.getSessionsClient(activity!!.applicationContext, googleSignInAccount)
+                    .startSession(session)
+                    .addOnSuccessListener {
+
+                        Log.i("SESSION START", "Session started successfully!")
+                        activity!!.runOnUiThread { result.success(true) }
+                    }
+                    .addOnFailureListener { e ->
+                        Log.w("SESSION START", "There was an error starting the session", e)
+                        activity!!.runOnUiThread { result.success(false) }
+                    }
+        }.start()
+    }
+
+    private fun stopSession(call: MethodCall, result: Result) {
+
+        val id = call.argument<String>("id")!!
+
+        Thread {
+            val typesBuilder = FitnessOptions.builder()
+            val fitnessOptions = typesBuilder.build()
+            val googleSignInAccount = GoogleSignIn.getAccountForExtension(activity!!.applicationContext, fitnessOptions)
+
+            Fitness.getSessionsClient(activity!!.applicationContext, googleSignInAccount)
+                    .stopSession(id)
+                    .addOnSuccessListener {
+
+                        
+
+                        Log.i("SESSION Stopped", "Session started successfully!")
+                        activity!!.runOnUiThread { result.success(true) }
+
+                    }
+                    .addOnFailureListener { e ->
+                        Log.w("SESSION Stopped", "There was an error starting the session", e)
+                        activity!!.runOnUiThread { result.success(false) }
+                    }
+        }.start()
+    }
+
+
+    private fun dumpDataSet(dataSet: DataSet) {
+        Log.i(TAG, "Data returned for Data type: ${dataSet.dataType.name}")
+
+        for (dp in dataSet.dataPoints) {
+            Log.i(TAG, "Data point:")
+            Log.i(TAG, "\tType: ${dp.dataType.name}")
+            Log.i(TAG, "\tStart: ${dp.getStartTimeString()}")
+            Log.i(TAG, "\tEnd: ${dp.getEndTimeString()}")
+            dp.dataType.fields.forEach {
+                Log.i(TAG, "\tField: ${it.name} Value: ${dp.getValue(it)}")
+            }
+        }
+    }
+
+    private fun dumpSession(session: Session) {
+        Log.i(TAG, "Data returned for Session: " + session.name
+                + "\n\tDescription: " + session.description
+                + "\n\tStart: " + session.getStartTimeString()
+                + "\n\tEnd: " + session.getEndTimeString())
+    }
+
     private fun getData(call: MethodCall, result: Result) {
         if (activity == null) {
             result.success(null)
@@ -380,10 +468,10 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
 
                 if (dataType != DataType.TYPE_SLEEP_SEGMENT) {
                     val response = Fitness.getHistoryClient(activity!!.applicationContext, googleSignInAccount)
-                        .readData(DataReadRequest.Builder()
-                            .read(dataType)
-                            .setTimeRange(startTime, endTime, TimeUnit.MILLISECONDS)
-                            .build())
+                            .readData(DataReadRequest.Builder()
+                                    .read(dataType)
+                                    .setTimeRange(startTime, endTime, TimeUnit.MILLISECONDS)
+                                    .build())
 
                     /// Fetch all data points for the specified DataType
                     val dataPoints = Tasks.await<DataReadResponse>(response).getDataSet(dataType)
@@ -394,7 +482,8 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
                                 "value" to getHealthDataValue(dataPoint, field),
                                 "date_from" to dataPoint.getStartTime(TimeUnit.MILLISECONDS),
                                 "date_to" to dataPoint.getEndTime(TimeUnit.MILLISECONDS),
-                                "source_name" to (dataPoint.originalDataSource.appPackageName ?: (dataPoint.originalDataSource.device?.model ?: "" )),
+                                "source_name" to (dataPoint.originalDataSource.appPackageName
+                                        ?: (dataPoint.originalDataSource.device?.model ?: "")),
                                 "source_id" to dataPoint.originalDataSource.streamIdentifier
                         )
                     }
@@ -514,10 +603,11 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
             "getData" -> getData(call, result)
             "writeData" -> writeData(call, result)
             "getTotalStepsInInterval" -> getTotalStepsInInterval(call, result)
+            "startSession" -> startSession(call, result)
+            "stopSession" -> stopSession(call, result)
             else -> result.notImplemented()
         }
     }
-
 
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {

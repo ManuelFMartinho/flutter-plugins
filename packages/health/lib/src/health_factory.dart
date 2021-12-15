@@ -212,6 +212,40 @@ class HealthFactory {
     return stepsCount;
   }
 
+  Future<bool> startSession({
+    required String sessionId,
+    required String sessionName,
+    required String description,
+    required HealthDataType dataType,
+    required DateTime startDate,
+  }) async {
+    final args = <String, dynamic>{
+      'startDate': startDate.millisecondsSinceEpoch,
+      'id': sessionId,
+      'sessionName': sessionName,
+      'description': description,
+      'dataTypeKey': _enumToString(dataType),
+    };
+    final bool? started = await _channel.invokeMethod("startSession", args);
+    if (started != null) {
+      return started;
+    } else {
+      return false;
+    }
+  }
+
+  Future<bool> stopSession({required String sessionId}) async {
+    final args = <String, dynamic>{
+      'id': sessionId,
+    };
+    final bool? stopped = await _channel.invokeMethod("stopSession", args);
+    if (stopped != null) {
+      return stopped;
+    } else {
+      return false;
+    }
+  }
+
   // Future<int?> getTotalDistanceInInterval(
   //   DateTime startDate,
   //   DateTime endDate,
