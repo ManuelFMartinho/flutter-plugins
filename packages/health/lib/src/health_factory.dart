@@ -95,22 +95,22 @@ class HealthFactory {
   /// Saves health data into the HealthKit or Google Fit store
   ///
   /// Returns a Future of true if successful, a Future of false otherwise
-  /// 
+  ///
   /// Parameters
-  /// 
-  /// [value]  
+  ///
+  /// [value]
   ///   value of the health data in double
-  /// [type]   
-  ///   the value's HealthDataType 
-  /// [startTime] 
-  ///   a DateTime object that specifies the start time when this data value is measured. 
+  /// [type]
+  ///   the value's HealthDataType
+  /// [startTime]
+  ///   a DateTime object that specifies the start time when this data value is measured.
   ///   It must be equal to or earlier than [endTime]
   /// [endTime]
   ///   a DateTime object that specifies the end time when this value is measured.
   ///   It must be equal to or later than [startTime].
-  ///   Simply set [endTime] equal to [startTime] 
+  ///   Simply set [endTime] equal to [startTime]
   ///   if the value is measured only at a specific point in time.
-  /// 
+  ///
   Future<bool> writeHealthData(double value, HealthDataType type,
       DateTime startTime, DateTime endTime) async {
     if (startTime.isAfter(endTime))
@@ -195,6 +195,38 @@ class HealthFactory {
       return <HealthDataPoint>[];
     }
   }
+
+  Future<int?> getTotalStepsInInterval(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    // Set parameters for method channel request
+    final args = <String, dynamic>{
+      'startDate': startDate.millisecondsSinceEpoch,
+      'endDate': endDate.millisecondsSinceEpoch
+    };
+    final stepsCount = await _channel.invokeMethod(
+      'getTotalStepsInInterval',
+      args,
+    );
+    return stepsCount;
+  }
+
+  // Future<int?> getTotalDistanceInInterval(
+  //   DateTime startDate,
+  //   DateTime endDate,
+  // ) async {
+  //   // Set parameters for method channel request
+  //   final args = <String, dynamic>{
+  //     'startDate': startDate.millisecondsSinceEpoch,
+  //     'endDate': endDate.millisecondsSinceEpoch
+  //   };
+  //   final stepsCount = await _channel.invokeMethod(
+  //     'getTotalDistanceInInterval',
+  //     args,
+  //   );
+  //   return stepsCount;
+  // }
 
   /// Given an array of [HealthDataPoint]s, this method will return the array
   /// without any duplicates.

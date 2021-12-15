@@ -15,6 +15,7 @@ import io.flutter.plugin.common.PluginRegistry.Registrar
 import android.content.Intent
 import android.os.Handler
 import android.util.Log
+import java.util.Date
 import androidx.annotation.NonNull
 import io.flutter.plugin.common.PluginRegistry.ActivityResultListener
 import java.util.concurrent.TimeUnit
@@ -51,6 +52,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
     private var WATER = "WATER"
     private var SLEEP_ASLEEP = "SLEEP_ASLEEP"
     private var SLEEP_AWAKE = "SLEEP_AWAKE"
+    private var AGGREGATE_STEP_COUNT = "AGGREGATE_STEP_COUNT"
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, CHANNEL_NAME)
@@ -153,6 +155,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
             WATER -> DataType.TYPE_HYDRATION
             SLEEP_ASLEEP -> DataType.TYPE_SLEEP_SEGMENT
             SLEEP_AWAKE -> DataType.TYPE_SLEEP_SEGMENT
+            AGGREGATE_STEP_COUNT -> DataType.AGGREGATE_STEP_COUNT_DELTA
             else -> DataType.TYPE_STEP_COUNT_DELTA
         }
     }
@@ -264,6 +267,90 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
         } catch (e3: Exception) {
              result.success(false)
         }
+    }
+
+   private fun getTotalStepsInInterval(call: MethodCall, result: Result) {
+        val start = call.argument<Long>("startDate")!!
+        val end = call.argument<Long>("endDate")!!
+
+        getStepsInRange(start, end) { map: Map<Long, Int>?, e: Throwable? ->
+            if (map != null) {
+                assert(map.size <= 1) { "getTotalStepsInInterval should return only one interval. Found: ${map.size}" }
+                result.success(map.values.firstOrNull())
+            } else {
+                result.error("failed", e?.message, null)
+            }
+        }
+    }
+
+    private fun getStepsInRange(
+            start: Long,
+            end: Long,
+            result: (Map<Long, Int>?, Throwable?) -> Unit
+    ) {
+        val activity = activity ?: return
+
+        val stepsDataType = keyToHealthDataType(STEPS)
+        val aggregatedDataType = keyToHealthDataType(AGGREGATE_STEP_COUNT)
+
+        val fitnessOptions = FitnessOptions.builder()
+                .addDataType(stepsDataType)
+                .addDataType(aggregatedDataType)
+                .build()
+        val gsa = GoogleSignIn.getAccountForExtension(activity, fitnessOptions)
+
+        val ds = DataSource.Builder()
+                .setAppPackageName("com.google.android.gms")
+                .setDataType(stepsDataType)
+                .setType(DataSource.TYPE_DERIVED)
+                .setStreamName("estimated_steps")
+                .build()
+
+        val duration = (end - start).toInt()
+
+        val request = DataReadRequest.Builder()
+                .aggregate(ds)
+                .bucketByTime(duration, TimeUnit.MILLISECONDS)
+                .setTimeRange(start, end, TimeUnit.MILLISECONDS)
+                .build()
+
+        val response = Fitness.getHistoryClient(activity, gsa).readData(request)
+
+        Thread {
+            try {
+                val readDataResult = Tasks.await(response)
+
+                val map = HashMap<Long, Int>() // need to return to Dart so can't use sparse array
+                for (bucket in readDataResult.buckets) {
+                    val dp = bucket.dataSets.firstOrNull()?.dataPoints?.firstOrNull()
+                    if (dp != null) {
+                        print(dp)
+
+                        val count = dp.getValue(aggregatedDataType.fields[0])
+
+                        val startTime = dp.getStartTime(TimeUnit.MILLISECONDS)
+                        val startDate = Date(startTime)
+                        val endDate = Date(dp.getEndTime(TimeUnit.MILLISECONDS))
+                        Log.i("FLUTTER_HEALTH::SUCCESS", "returning $count steps for $startDate - $endDate")
+                        map[startTime] = count.asInt()
+                    } else {
+                        val startDay = Date(start)
+                        val endDay = Date(end)
+                        Log.i("FLUTTER_HEALTH::ERROR", "no steps for $startDay - $endDay")
+                    }
+                }
+                activity.runOnUiThread {
+                    result(map, null)
+                }
+            } catch (e: Throwable) {
+                Log.e("FLUTTER_HEALTH::ERROR", "failed: ${e.message}")
+
+                activity.runOnUiThread {
+                    result(null, e)
+                }
+            }
+
+        }.start()
     }
 
     private fun getData(call: MethodCall, result: Result) {
@@ -426,9 +513,12 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
             "requestAuthorization" -> requestAuthorization(call, result)
             "getData" -> getData(call, result)
             "writeData" -> writeData(call, result)
+            "getTotalStepsInInterval" -> getTotalStepsInInterval(call, result)
             else -> result.notImplemented()
         }
     }
+
+
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         if (channel == null) {
