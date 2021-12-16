@@ -246,6 +246,48 @@ class HealthFactory {
     }
   }
 
+  Future<List<HealthDataPoint>?> readFromSession({
+    required DateTime startDate,
+    required DateTime endDate,
+    required HealthDataType dataType,
+    required String sessionName,
+  }) async {
+    final args = <String, dynamic>{
+      'startDate': startDate.millisecondsSinceEpoch,
+      'endDate': endDate.microsecondsSinceEpoch,
+      'sessionName': sessionName,
+      'dataTypeKey': _enumToString(dataType),
+    };
+    final unit = _dataTypeToUnit[dataType]!;
+
+    final fetchedDataPoints =
+        await _channel.invokeMethod('readFromSession', args);
+
+    if (fetchedDataPoints != null) {
+      return fetchedDataPoints.map<HealthDataPoint>((e) {
+        final num value = e['value'];
+        final DateTime from =
+            DateTime.fromMillisecondsSinceEpoch(e['date_from']);
+        final DateTime to = DateTime.fromMillisecondsSinceEpoch(e['date_to']);
+        final String sourceId = e["source_id"];
+        final String sourceName = e["source_name"];
+        return HealthDataPoint(
+          value,
+          dataType,
+          unit,
+          from,
+          to,
+          _platformType,
+          _deviceId!,
+          sourceId,
+          sourceName,
+        );
+      }).toList();
+    } else {
+      return <HealthDataPoint>[];
+    }
+  }
+
   // Future<int?> getTotalDistanceInInterval(
   //   DateTime startDate,
   //   DateTime endDate,

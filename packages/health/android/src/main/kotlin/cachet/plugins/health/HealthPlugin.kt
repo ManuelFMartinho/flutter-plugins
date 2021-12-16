@@ -32,6 +32,7 @@ const val GOOGLE_FIT_PERMISSIONS_REQUEST_CODE = 1111
 const val CHANNEL_NAME = "flutter_health"
 const val MMOLL_2_MGDL = 18.0 // 1 mmoll= 18 mgdl
 const val TAG = "HEALTH"
+
 class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandler, ActivityResultListener, Result, ActivityAware, FlutterPlugin {
     private var result: Result? = null
     private var handler: Handler? = null
@@ -405,10 +406,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
             Fitness.getSessionsClient(activity!!.applicationContext, googleSignInAccount)
                     .stopSession(id)
                     .addOnSuccessListener {
-
-                        
-
-                        Log.i("SESSION Stopped", "Session started successfully!")
+                        Log.i("SESSION Stopped", "Session stopped successfully!")
                         activity!!.runOnUiThread { result.success(true) }
 
                     }
@@ -417,6 +415,74 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
                         activity!!.runOnUiThread { result.success(false) }
                     }
         }.start()
+    }
+
+    private fun readFromSession(call: MethodCall, result: Result) {
+        val startTime = call.argument<Long>("startDate")!!
+        val endTime = call.argument<Long>("endDate")!!
+        val sessionName = call.argument<String>("sessionName")!!
+
+        val type = call.argument<String>("dataTypeKey")!!
+        val dataType = keyToHealthDataType(type)
+        val field = getField(type)
+
+
+        Thread {
+            val readRequest = SessionReadRequest.Builder()
+                    .setTimeInterval(startTime, endTime, TimeUnit.MILLISECONDS)
+                    .read(dataType)
+                    .setSessionName(sessionName)
+                    .enableServerQueries()
+                    .readSessionsFromAllApps()
+                    .build()
+
+            val typesBuilder = FitnessOptions.builder()
+            typesBuilder.addDataType(dataType)
+            if (dataType == DataType.TYPE_SLEEP_SEGMENT) {
+                typesBuilder.accessSleepSessions(FitnessOptions.ACCESS_READ)
+            }
+            val fitnessOptions = typesBuilder.build()
+            val googleSignInAccount = GoogleSignIn.getAccountForExtension(activity!!.applicationContext, fitnessOptions)
+
+            Fitness.getSessionsClient(activity!!.applicationContext, googleSignInAccount)
+                    .readSession(readRequest)
+                    .addOnSuccessListener { response ->
+                        val sessions = response.sessions
+                        Log.i(TAG, "Number of returned sessions is: ${sessions.size}")
+                        var healthData: MutableList<Map<String, Any?>> = mutableListOf()
+                        for (session in sessions) {
+                            // Process the session
+                            dumpSession(session)
+
+                            // Process the data sets for this session
+                            val dataSets = response.getDataSet(session)
+                            for (dataSet in dataSets) {
+                                dumpDataSet(dataSet)
+                                for (dataPoint in dataSet.dataPoints) {
+                                    healthData.add(
+                                            hashMapOf(
+                                                    "value" to dataPoint.getValue(getField(dataPoint.dataType.name)),
+                                                    "date_from" to dataPoint.getStartTime(TimeUnit.MILLISECONDS),
+                                                    "date_to" to dataPoint.getEndTime(TimeUnit.MILLISECONDS),
+                                                    "unit" to "MINUTES",
+                                                    "source_name" to session.appPackageName,
+                                                    "source_id" to session.identifier
+                                            )
+                                    )
+                                }
+
+                                // ...
+                            }
+                        }
+                        activity!!.runOnUiThread { result.success(healthData) }
+                    }
+                    .addOnFailureListener { e ->
+                        activity!!.runOnUiThread { result.success(null) }
+                        Log.w(TAG, "Failed to read session", e)
+
+                    }
+        }.start()
+
     }
 
 
@@ -468,6 +534,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
 
                 if (dataType != DataType.TYPE_SLEEP_SEGMENT) {
                     val response = Fitness.getHistoryClient(activity!!.applicationContext, googleSignInAccount)
+
                             .readData(DataReadRequest.Builder()
                                     .read(dataType)
                                     .setTimeRange(startTime, endTime, TimeUnit.MILLISECONDS)
@@ -605,6 +672,7 @@ class HealthPlugin(private var channel: MethodChannel? = null) : MethodCallHandl
             "getTotalStepsInInterval" -> getTotalStepsInInterval(call, result)
             "startSession" -> startSession(call, result)
             "stopSession" -> stopSession(call, result)
+            "readFromSession" -> readFromSession(call, result)
             else -> result.notImplemented()
         }
     }
